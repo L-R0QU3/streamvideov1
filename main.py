@@ -17,7 +17,7 @@ routes = web.RouteTableDef()
 app = None
 
 # Tamaño del bloque requerido por Telegram (1 MB = 1024 * 1024 bytes)
-CHUNK_SIZE = 1024 * 1024
+CHUNK_SIZE = 512 * 1024
 
 # --- RUTA RAÍZ PARA UPTIMEROBOT Y VERIFICACIÓN ---
 @routes.get("/")
