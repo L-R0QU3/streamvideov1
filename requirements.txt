@@ -1,0 +1,3 @@
+hydrogram
+aiohttp
+python-dotenv
