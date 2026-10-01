@@ -16,13 +16,15 @@ SERVER_URL = os.getenv("SERVER_URL", "http://localhost:8080")
 routes = web.RouteTableDef()
 app = None
 
-# Múltiplo exacto de descarga requerido por Telegram (1 MB)
+# Múltiplo exacto de descarga requerido por Telegram (1 MB = 1024 * 1024 bytes)
 CHUNK_SIZE = 1024 * 1024
 
+# --- RUTA RAÍZ PARA UPTIMEROBOT Y HEALTH CHECK ---
 @routes.get("/")
 async def handle_home(request):
     return web.Response(text="🤖 Bot Streamer Online 24/7", status=200)
 
+# --- SERVIDOR WEB DE STREAMING OPTIMIZADO ---
 @routes.get("/stream/{chat_id}/{message_id}")
 async def handle_stream(request):
     try:
@@ -48,7 +50,7 @@ async def handle_stream(request):
 
         length = to_bytes - from_bytes + 1
 
-        # Alineación matemática a bloques de 1MB
+        # Cálculo del bloque alineado en unidades de CHUNK_SIZE
         chunk_offset = from_bytes // CHUNK_SIZE
         offset_difference = from_bytes - (chunk_offset * CHUNK_SIZE)
 
@@ -59,7 +61,7 @@ async def handle_stream(request):
                 "Content-Range": f"bytes {from_bytes}-{to_bytes}/{file_size}",
                 "Content-Length": str(length),
                 "Accept-Ranges": "bytes",
-                "Cache-Control": "no-cache",
+                "Cache-Control": "public, max-age=3600",
                 "Access-Control-Allow-Origin": "*",
             },
         )
@@ -80,6 +82,10 @@ async def handle_stream(request):
 
             to_write = min(len(chunk), length - bytes_written)
             await response.write(chunk[:to_write])
+            
+            # Forzar el envío inmediato al cliente para liberar RAM en Render
+            await response.drain()
+            
             bytes_written += to_write
 
             if bytes_written >= length:
