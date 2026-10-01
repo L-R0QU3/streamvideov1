@@ -16,15 +16,13 @@ SERVER_URL = os.getenv("SERVER_URL", "http://localhost:8080")
 routes = web.RouteTableDef()
 app = None
 
-# Tamaño base de alineación requerida por la API de Telegram (1 MB)
-TELEGRAM_CHUNK_SIZE = 1024 * 1024
+# Múltiplo exacto de descarga requerido por Telegram (1 MB)
+CHUNK_SIZE = 1024 * 1024
 
-# --- RUTA RAÍZ PARA UPTIMEROBOT ---
 @routes.get("/")
 async def handle_home(request):
     return web.Response(text="🤖 Bot Streamer Online 24/7", status=200)
 
-# --- SERVIDOR WEB DE STREAMING HIGH-PERFORMANCE ---
 @routes.get("/stream/{chat_id}/{message_id}")
 async def handle_stream(request):
     try:
@@ -50,9 +48,9 @@ async def handle_stream(request):
 
         length = to_bytes - from_bytes + 1
 
-        # Alineación estricta a 1MB para evitar OFFSET_INVALID en Telegram
-        chunk_offset = from_bytes // TELEGRAM_CHUNK_SIZE
-        offset_difference = from_bytes - (chunk_offset * TELEGRAM_CHUNK_SIZE)
+        # Alineación matemática a bloques de 1MB
+        chunk_offset = from_bytes // CHUNK_SIZE
+        offset_difference = from_bytes - (chunk_offset * CHUNK_SIZE)
 
         response = web.StreamResponse(
             status=206 if range_header else 200,
@@ -61,7 +59,7 @@ async def handle_stream(request):
                 "Content-Range": f"bytes {from_bytes}-{to_bytes}/{file_size}",
                 "Content-Length": str(length),
                 "Accept-Ranges": "bytes",
-                "Cache-Control": "public, max-age=3600",
+                "Cache-Control": "no-cache",
                 "Access-Control-Allow-Origin": "*",
             },
         )

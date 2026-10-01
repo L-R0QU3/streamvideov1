@@ -1,3 +1,4 @@
 hydrogram
 aiohttp
 python-dotenv
+tgcrypto
