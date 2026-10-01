@@ -19,6 +19,12 @@ app = None
 # Tamaño del bloque requerido por Telegram (1 MB = 1024 * 1024 bytes)
 CHUNK_SIZE = 1024 * 1024
 
+# --- RUTA RAÍZ PARA UPTIMEROBOT Y VERIFICACIÓN ---
+@routes.get("/")
+async def handle_home(request):
+    return web.Response(text="🤖 Bot Streamer Online 24/7", status=200)
+
+# --- SERVIDOR WEB DE STREAMING ---
 @routes.get("/stream/{chat_id}/{message_id}")
 async def handle_stream(request):
     try:
