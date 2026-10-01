@@ -16,17 +16,62 @@ SERVER_URL = os.getenv("SERVER_URL", "http://localhost:8080")
 routes = web.RouteTableDef()
 app = None
 
-# Múltiplo exacto de descarga requerido por Telegram (1 MB = 1024 * 1024 bytes)
 CHUNK_SIZE = 1024 * 1024
 
-# --- RUTA RAÍZ PARA UPTIMEROBOT Y HEALTH CHECK ---
 @routes.get("/")
 async def handle_home(request):
     return web.Response(text="🤖 Bot Streamer Online 24/7", status=200)
 
-# --- SERVIDOR WEB DE STREAMING OPTIMIZADO ---
+# --- REPRODUCTOR HTML A PANTALLA COMPLETA ---
 @routes.get("/stream/{chat_id}/{message_id}")
-async def handle_stream(request):
+async def handle_stream_player(request):
+    chat_id = request.match_info["chat_id"]
+    message_id = request.match_info["message_id"]
+    video_src = f"/video/{chat_id}/{message_id}"
+
+    html_content = f"""
+    <!DOCTYPE html>
+    <html lang="es">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Video Stream</title>
+        <style>
+            * {{
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+                background-color: #000;
+            }}
+            body, html {{
+                width: 100%;
+                height: 100%;
+                overflow: hidden;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+            }}
+            video {{
+                width: 100vw;
+                height: 100vh;
+                object-fit: contain; /* Mantiene la proporción del video adaptándose al 100% de la ventana */
+                outline: none;
+            }}
+        </style>
+    </head>
+    <body>
+        <video controls autoplay name="media">
+            <source src="{video_src}" type="video/mp4">
+            Tu navegador no soporta la reproducción de video HTML5.
+        </video>
+    </body>
+    </html>
+    """
+    return web.Response(text=html_content, content_type="text/html")
+
+# --- TRANSMISIÓN DE BYTES DEL VIDEO ---
+@routes.get("/video/{chat_id}/{message_id}")
+async def handle_video_bytes(request):
     try:
         chat_id = int(request.match_info["chat_id"])
         message_id = int(request.match_info["message_id"])
@@ -50,7 +95,6 @@ async def handle_stream(request):
 
         length = to_bytes - from_bytes + 1
 
-        # Cálculo del bloque alineado en unidades de CHUNK_SIZE
         chunk_offset = from_bytes // CHUNK_SIZE
         offset_difference = from_bytes - (chunk_offset * CHUNK_SIZE)
 
@@ -82,10 +126,7 @@ async def handle_stream(request):
 
             to_write = min(len(chunk), length - bytes_written)
             await response.write(chunk[:to_write])
-            
-            # Forzar el envío inmediato al cliente para liberar RAM en Render
             await response.drain()
-            
             bytes_written += to_write
 
             if bytes_written >= length:
