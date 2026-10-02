@@ -35,9 +35,9 @@ def verify_token(chat_id: int, message_id: int, token: str) -> bool:
 
 @routes.get("/")
 async def handle_home(request):
-    return web.Response(text="Streamer Online", status=200)
+    return web.Response(text="200", status=200)
 
-# --- REPRODUCTOR HTML CINEMA DARK CON ESTILOS FORZADOS ---
+# --- REPRODUCTOR HTML CON INTERFAZ MODERNA PLYR ---
 @routes.get("/stream/{chat_id}/{message_id}")
 async def handle_stream_player(request):
     try:
@@ -55,49 +55,67 @@ async def handle_stream_player(request):
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Stream Player</title>
+    <!-- Plyr CSS para interfaz moderna estilo cine -->
+    <link rel="stylesheet" href="https://cdn.plyr.io/3.7.8/plyr.css" />
     <style>
         html, body {{
             width: 100%;
             height: 100%;
             margin: 0;
             padding: 0;
-            background-color: #08080a !important;
-            color: #ffffff;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #0d0e12 !important;
             overflow: hidden;
             display: flex;
             justify-content: center;
             align-items: center;
         }}
         .player-wrapper {{
-            position: relative;
             width: 100vw;
             height: 100vh;
             display: flex;
             justify-content: center;
             align-items: center;
-            background: #000000;
+            background: #000;
+        }}
+        /* Personalización de Plyr a pantalla completa */
+        .plyr {{
+            width: 100vw !important;
+            height: 100vh !important;
+            --plyr-color-main: #e50914; /* Color rojo estilo streaming */
+        }}
+        .plyr__video-wrapper {{
+            height: 100vh !important;
         }}
         video {{
-            width: 100%;
-            height: 100%;
-            max-width: 100vw;
-            max-height: 100vh;
-            object-fit: contain;
-            outline: none;
-            background-color: #000000;
+            object-fit: contain !important;
         }}
     </style>
 </head>
 <body>
     <div class="player-wrapper">
-        <video controls autoplay playsinline name="media">
-            <source src="{video_src}" type="video/mp4">
-            Tu navegador no soporta la reproducción de video HTML5.
+        <video id="player" playsinline autoplay>
+            <source src="{video_src}" type="video/mp4" />
         </video>
     </div>
+
+    <!-- Plyr JS -->
+    <script src="https://cdn.plyr.io/3.7.8/plyr.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {{
+            const player = new Plyr('#player', {{
+                controls: [
+                    'play-large', 'play', 'progress', 'current-time', 
+                    'duration', 'mute', 'volume', 'captions', 'settings', 
+                    'pip', 'airplay', 'fullscreen'
+                ],
+                autoplay: true,
+                hideControls: true,
+                resetOnEnd: true
+            }});
+        }});
+    </script>
 </body>
 </html>"""
 
