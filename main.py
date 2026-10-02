@@ -1,6 +1,5 @@
 import asyncio
 import os
-import time
 import hmac
 import hashlib
 from dotenv import load_dotenv
@@ -16,46 +15,41 @@ API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 SERVER_URL = os.getenv("SERVER_URL", "http://localhost:8080")
 
-# Clave secreta para firmar los enlaces temporales (usamos API_HASH como Secret Key)
+# Clave secreta para firmar los enlaces (usamos API_HASH como Secret Key)
 SECRET_KEY = API_HASH.encode()
-# Tiempo de validez del enlace en segundos (4 horas = 14400 segundos)
-LINK_EXPIRATION_TIME = 14400 
 
 routes = web.RouteTableDef()
 app = None
 
 CHUNK_SIZE = 1024 * 1024
 
-def generate_token(chat_id: int, message_id: int, expires_at: int) -> str:
-    """Genera una firma HMAC segura para validar el enlace."""
-    data = f"{chat_id}:{message_id}:{expires_at}"
+def generate_token(chat_id: int, message_id: int) -> str:
+    """Genera una firma HMAC permanente para validar el enlace."""
+    data = f"{chat_id}:{message_id}"
     return hmac.new(SECRET_KEY, data.encode(), hashlib.sha256).hexdigest()
 
-def verify_token(chat_id: int, message_id: int, expires_at: int, token: str) -> bool:
-    """Valida la firma HMAC y comprueba que el enlace no haya expirado."""
-    if time.time() > expires_at:
-        return False
-    expected_token = generate_token(chat_id, message_id, expires_at)
+def verify_token(chat_id: int, message_id: int, token: str) -> bool:
+    """Valida la firma HMAC del enlace."""
+    expected_token = generate_token(chat_id, message_id)
     return hmac.compare_digest(expected_token, token)
 
 @routes.get("/")
 async def handle_home(request):
     return web.Response(text="🤖 Bot Streamer Online 24/7", status=200)
 
-# --- REPRODUCTOR HTML FULLSCREEN COMPATIBLE ---
+# --- REPRODUCTOR HTML FULLSCREEN ILIMITADO ---
 @routes.get("/stream/{chat_id}/{message_id}")
 async def handle_stream_player(request):
     try:
         chat_id = int(request.match_info["chat_id"])
         message_id = int(request.match_info["message_id"])
         token = request.query.get("token")
-        expires = int(request.query.get("expires", 0))
 
         # Validación de Seguridad
-        if not token or not verify_token(chat_id, message_id, expires, token):
-            return web.Response(status=403, text="⛔ Enlace no válido o expirado.")
+        if not token or not verify_token(chat_id, message_id, token):
+            return web.Response(status=403, text="⛔ Enlace no válido.")
 
-        video_src = f"/video/{chat_id}/{message_id}?token={token}&expires={expires}"
+        video_src = f"/video/{chat_id}/{message_id}?token={token}"
 
         html_content = f"""
         <!DOCTYPE html>
@@ -99,17 +93,16 @@ async def handle_stream_player(request):
     except Exception:
         return web.Response(status=400, text="Petición incorrecta.")
 
-# --- TRANSMISIÓN DE BYTES CON VALIDACIÓN DE TOKEN ---
+# --- TRANSMISIÓN DE BYTES CON SEGURIDAD ---
 @routes.get("/video/{chat_id}/{message_id}")
 async def handle_video_bytes(request):
     try:
         chat_id = int(request.match_info["chat_id"])
         message_id = int(request.match_info["message_id"])
         token = request.query.get("token")
-        expires = int(request.query.get("expires", 0))
 
-        # Validación de Seguridad en los bytes
-        if not token or not verify_token(chat_id, message_id, expires, token):
+        # Validación de Seguridad
+        if not token or not verify_token(chat_id, message_id, token):
             return web.Response(status=403, text="Acceso denegado.")
 
         msg = await app.get_messages(chat_id, message_id)
@@ -141,7 +134,7 @@ async def handle_video_bytes(request):
                 "Content-Range": f"bytes {from_bytes}-{to_bytes}/{file_size}",
                 "Content-Length": str(length),
                 "Accept-Ranges": "bytes",
-                "Cache-Control": "private, no-transform, max-age=3600",
+                "Cache-Control": "public, max-age=3600",
                 "X-Content-Type-Options": "nosniff",
             },
         )
@@ -182,15 +175,13 @@ async def main():
             chat_id = message.chat.id
             message_id = message.id
             
-            # Generar token con expiración (4 horas)
-            expires_at = int(time.time()) + LINK_EXPIRATION_TIME
-            token = generate_token(chat_id, message_id, expires_at)
-            
-            stream_link = f"{SERVER_URL}/stream/{chat_id}/{message_id}?token={token}&expires={expires_at}"
+            # Generar token permanente
+            token = generate_token(chat_id, message_id)
+            stream_link = f"{SERVER_URL}/stream/{chat_id}/{message_id}?token={token}"
             
             await message.reply_text(
-                f"🎬 **Enlace seguro generado (Válido por 4 horas):**\n\n`{stream_link}`\n\n"
-                f"Abre este enlace en tu navegador para reproducir el video."
+                f"🎬 **Enlace de reproducción generado:**\n\n`{stream_link}`\n\n"
+                f"Abre este enlace en tu navegador para ver el video."
             )
         else:
             await message.reply_text(
