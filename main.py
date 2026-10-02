@@ -15,7 +15,7 @@ API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 SERVER_URL = os.getenv("SERVER_URL", "http://localhost:8080")
 
-# Clave secreta para firmar los enlaces (usamos API_HASH como Secret Key)
+# Clave secreta para firmar los enlaces
 SECRET_KEY = API_HASH.encode()
 
 routes = web.RouteTableDef()
@@ -37,7 +37,7 @@ def verify_token(chat_id: int, message_id: int, token: str) -> bool:
 async def handle_home(request):
     return web.Response(text="🤖 Bot Streamer Online 24/7", status=200)
 
-# --- REPRODUCTOR HTML FULLSCREEN ILIMITADO ---
+# --- REPRODUCTOR HTML REDISEÑADO (CINEMA DARK) ---
 @routes.get("/stream/{chat_id}/{message_id}")
 async def handle_stream_player(request):
     try:
@@ -58,34 +58,54 @@ async def handle_stream_player(request):
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <title>Stream Player</title>
+            <link rel="preconnect" href="https://fonts.googleapis.com">
+            <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+            <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
             <style>
                 * {{
                     margin: 0;
                     padding: 0;
                     box-sizing: border-box;
-                    background-color: #000;
                 }}
                 body, html {{
                     width: 100%;
                     height: 100%;
+                    background-color: #0d0e12;
+                    font-family: 'Inter', system-ui, -apple-system, sans-serif;
                     overflow: hidden;
                     display: flex;
                     justify-content: center;
                     align-items: center;
+                }}
+                .player-container {{
+                    position: relative;
+                    width: 100vw;
+                    height: 100vh;
+                    display: flex;
+                    justify-content: center;
+                    align-items: center;
+                    background: radial-gradient(circle, rgba(18,20,26,1) 0%, rgba(5,6,8,1) 100%);
                 }}
                 video {{
                     width: 100vw;
                     height: 100vh;
                     object-fit: contain;
                     outline: none;
+                    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.8);
+                }}
+                /* Personalización de la barra de desplazamiento y elementos nativos */
+                video::-webkit-media-controls-panel {{
+                    background-image: linear-gradient(to top, rgba(0,0,0,0.85), rgba(0,0,0,0));
                 }}
             </style>
         </head>
         <body>
-            <video controls autoplay name="media">
-                <source src="{video_src}" type="video/mp4">
-                Tu navegador no soporta la reproducción de video HTML5.
-            </video>
+            <div class="player-container">
+                <video controls autoplay name="media" playsinline>
+                    <source src="{video_src}" type="video/mp4">
+                    Tu navegador no soporta la reproducción de video HTML5.
+                </video>
+            </div>
         </body>
         </html>
         """
