@@ -18,7 +18,7 @@ SERVER_URL = os.getenv("SERVER_URL", "http://localhost:8080")
 
 # Clave secreta para firmar los enlaces temporales (usamos API_HASH como Secret Key)
 SECRET_KEY = API_HASH.encode()
-# Tiempo de validez del enlace en segundos (Ejemplo: 4 horas = 14400 segundos)
+# Tiempo de validez del enlace en segundos (4 horas = 14400 segundos)
 LINK_EXPIRATION_TIME = 14400 
 
 routes = web.RouteTableDef()
@@ -42,7 +42,7 @@ def verify_token(chat_id: int, message_id: int, expires_at: int, token: str) -> 
 async def handle_home(request):
     return web.Response(text="🤖 Bot Streamer Online 24/7", status=200)
 
-# --- REPRODUCTOR HTML MODERNO (VIDEO.JS) ---
+# --- REPRODUCTOR HTML FULLSCREEN COMPATIBLE ---
 @routes.get("/stream/{chat_id}/{message_id}")
 async def handle_stream_player(request):
     try:
@@ -64,8 +64,6 @@ async def handle_stream_player(request):
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <title>Stream Player</title>
-            <!-- Video.js CSS -->
-            <link href="https://vjs.zencdn.net/8.10.0/video-js.css" rel="stylesheet" />
             <style>
                 * {{
                     margin: 0;
@@ -81,36 +79,19 @@ async def handle_stream_player(request):
                     justify-content: center;
                     align-items: center;
                 }}
-                .video-js {{
-                    width: 100vw !important;
-                    height: 100vh !important;
-                }}
-                .vjs-big-play-button {{
-                    top: 50% !important;
-                    left: 50% !important;
-                    transform: translate(-50%, -50%) !important;
-                    border-radius: 50% !important;
-                    width: 2em !important;
-                    height: 2em !important;
-                    line-height: 2em !important;
+                video {{
+                    width: 100vw;
+                    height: 100vh;
+                    object-fit: contain;
+                    outline: none;
                 }}
             </style>
         </head>
         <body>
-            <video
-                id="my-video"
-                class="video-js vjs-big-play-centered vjs-theme-forest"
-                controls
-                preload="auto"
-                autoplay
-                data-setup='{{}}'>
-                <source src="{video_src}" type="video/mp4" />
-                <p class="vjs-no-js">
-                    Para ver este video habilita JavaScript en tu navegador.
-                </p>
+            <video controls autoplay name="media">
+                <source src="{video_src}" type="video/mp4">
+                Tu navegador no soporta la reproducción de video HTML5.
             </video>
-            <!-- Video.js JS -->
-            <script src="https://vjs.zencdn.net/8.10.0/video.min.js"></script>
         </body>
         </html>
         """
