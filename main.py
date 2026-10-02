@@ -35,9 +35,9 @@ def verify_token(chat_id: int, message_id: int, token: str) -> bool:
 
 @routes.get("/")
 async def handle_home(request):
-    return web.Response(text="🤖 Bot Streamer Online 24/7", status=200)
+    return web.Response(text="Streamer Online", status=200)
 
-# --- REPRODUCTOR HTML REDISEÑADO (CINEMA DARK) ---
+# --- REPRODUCTOR HTML CINEMA DARK CON ESTILOS FORZADOS ---
 @routes.get("/stream/{chat_id}/{message_id}")
 async def handle_stream_player(request):
     try:
@@ -51,65 +51,61 @@ async def handle_stream_player(request):
 
         video_src = f"/video/{chat_id}/{message_id}?token={token}"
 
-        html_content = f"""
-        <!DOCTYPE html>
-        <html lang="es">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Stream Player</title>
-            <link rel="preconnect" href="https://fonts.googleapis.com">
-            <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-            <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
-            <style>
-                * {{
-                    margin: 0;
-                    padding: 0;
-                    box-sizing: border-box;
-                }}
-                body, html {{
-                    width: 100%;
-                    height: 100%;
-                    background-color: #0d0e12;
-                    font-family: 'Inter', system-ui, -apple-system, sans-serif;
-                    overflow: hidden;
-                    display: flex;
-                    justify-content: center;
-                    align-items: center;
-                }}
-                .player-container {{
-                    position: relative;
-                    width: 100vw;
-                    height: 100vh;
-                    display: flex;
-                    justify-content: center;
-                    align-items: center;
-                    background: radial-gradient(circle, rgba(18,20,26,1) 0%, rgba(5,6,8,1) 100%);
-                }}
-                video {{
-                    width: 100vw;
-                    height: 100vh;
-                    object-fit: contain;
-                    outline: none;
-                    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.8);
-                }}
-                /* Personalización de la barra de desplazamiento y elementos nativos */
-                video::-webkit-media-controls-panel {{
-                    background-image: linear-gradient(to top, rgba(0,0,0,0.85), rgba(0,0,0,0));
-                }}
-            </style>
-        </head>
-        <body>
-            <div class="player-container">
-                <video controls autoplay name="media" playsinline>
-                    <source src="{video_src}" type="video/mp4">
-                    Tu navegador no soporta la reproducción de video HTML5.
-                </video>
-            </div>
-        </body>
-        </html>
-        """
-        return web.Response(text=html_content, content_type="text/html")
+        html_content = f"""<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Stream Player</title>
+    <style>
+        html, body {{
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            background-color: #08080a !important;
+            color: #ffffff;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }}
+        .player-wrapper {{
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: #000000;
+        }}
+        video {{
+            width: 100%;
+            height: 100%;
+            max-width: 100vw;
+            max-height: 100vh;
+            object-fit: contain;
+            outline: none;
+            background-color: #000000;
+        }}
+    </style>
+</head>
+<body>
+    <div class="player-wrapper">
+        <video controls autoplay playsinline name="media">
+            <source src="{video_src}" type="video/mp4">
+            Tu navegador no soporta la reproducción de video HTML5.
+        </video>
+    </div>
+</body>
+</html>"""
+
+        return web.Response(
+            text=html_content, 
+            content_type="text/html",
+            headers={"Cache-Control": "no-cache"}
+        )
     except Exception:
         return web.Response(status=400, text="Petición incorrecta.")
 
@@ -195,7 +191,6 @@ async def main():
             chat_id = message.chat.id
             message_id = message.id
             
-            # Generar token permanente
             token = generate_token(chat_id, message_id)
             stream_link = f"{SERVER_URL}/stream/{chat_id}/{message_id}?token={token}"
             
