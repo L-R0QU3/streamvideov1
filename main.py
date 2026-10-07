@@ -21,6 +21,7 @@ SECRET_KEY = API_HASH.encode()
 routes = web.RouteTableDef()
 app = None
 
+# Bloques de 1MB para streaming fluido
 CHUNK_SIZE = 1024 * 1024
 
 def generate_token(chat_id: int, message_id: int) -> str:
@@ -35,9 +36,9 @@ def verify_token(chat_id: int, message_id: int, token: str) -> bool:
 
 @routes.get("/")
 async def handle_home(request):
-    return web.Response(text="200 OK - Bot Streamer & Downloader Active", status=200)
+    return web.Response(text="200 OK - Bot Active", status=200)
 
-# --- REPRODUCTOR HTML CON INTERFAZ MODERNA PLYR ---
+# --- REPRODUCTOR OPTIMIZADO PARA AHORRO DE ANCHO DE BANDA ---
 @routes.get("/stream/{chat_id}/{message_id}")
 async def handle_stream_player(request):
     try:
@@ -50,6 +51,7 @@ async def handle_stream_player(request):
 
         video_src = f"/video/{chat_id}/{message_id}?token={token}"
 
+        # OPTIMIZACIÓN: preload="none" evita descargar el video si no se presiona Play
         html_content = f"""<!DOCTYPE html>
 <html lang="es">
 <head>
@@ -92,7 +94,7 @@ async def handle_stream_player(request):
 </head>
 <body>
     <div class="player-wrapper">
-        <video id="player" playsinline autoplay>
+        <video id="player" playsinline preload="none">
             <source src="{video_src}" type="video/mp4" />
         </video>
     </div>
@@ -106,8 +108,7 @@ async def handle_stream_player(request):
                     'duration', 'mute', 'volume', 'captions', 'settings', 
                     'pip', 'airplay', 'fullscreen'
                 ],
-                autoplay: true,
-                hideControls: true,
+                autoplay: false,
                 resetOnEnd: true
             }});
         }});
@@ -118,12 +119,12 @@ async def handle_stream_player(request):
         return web.Response(
             text=html_content, 
             content_type="text/html",
-            headers={"Cache-Control": "no-cache"}
+            headers={"Cache-Control": "private, max-age=86400"}
         )
     except Exception:
         return web.Response(status=400, text="Petición incorrecta.")
 
-# --- TRANSMISIÓN DE BYTES CON SEGURIDAD ---
+# --- TRANSMISIÓN DE BYTES CON CORTE DE CONEXIÓN RÁPIDO ---
 @routes.get("/video/{chat_id}/{message_id}")
 async def handle_video_bytes(request):
     try:
@@ -136,7 +137,7 @@ async def handle_video_bytes(request):
 
         msg = await app.get_messages(chat_id, message_id)
         if not msg or (not msg.video and not msg.document and not msg.audio):
-            return web.Response(status=404, text="Video no encontrado")
+            return web.Response(status=404, text="Archivo no encontrado")
 
         media = msg.video or msg.document or msg.audio
         file_size = media.file_size
@@ -152,7 +153,6 @@ async def handle_video_bytes(request):
                 to_bytes = int(bytes_range[1])
 
         length = to_bytes - from_bytes + 1
-
         chunk_offset = from_bytes // CHUNK_SIZE
         offset_difference = from_bytes - (chunk_offset * CHUNK_SIZE)
 
@@ -183,8 +183,14 @@ async def handle_video_bytes(request):
                     offset_difference = 0
 
             to_write = min(len(chunk), length - bytes_written)
-            await response.write(chunk[:to_write])
-            await response.drain()
+            
+            # Si el cliente cierra el navegador, detiene la descarga de Telegram inmediatamente
+            try:
+                await response.write(chunk[:to_write])
+                await response.drain()
+            except (ConnectionResetError, RuntimeError):
+                break
+
             bytes_written += to_write
 
             if bytes_written >= length:
@@ -194,7 +200,7 @@ async def handle_video_bytes(request):
     except Exception as e:
         return web.Response(status=500, text=str(e))
 
-# --- ENDPOINT DE DESCARGA DIRECTA DE ARCHIVOS ---
+# --- ENDPOINT DE DESCARGA DIRECTA ---
 @routes.get("/download/{chat_id}/{message_id}")
 async def handle_file_download(request):
     try:
@@ -209,9 +215,9 @@ async def handle_file_download(request):
         if not msg:
             return web.Response(status=404, text="Mensaje no encontrado")
 
-        media = msg.document or msg.video or msg.audio or msg.voice or msg.photo
+        media = msg.document or msg.video or msg.audio or msg.photo
         if not media:
-            return web.Response(status=404, text="No hay archivo adjunto en este mensaje")
+            return web.Response(status=404, text="Archivo no adjunto")
 
         file_size = getattr(media, "file_size", 0)
         mime_type = getattr(media, "mime_type", None) or "application/octet-stream"
@@ -220,10 +226,6 @@ async def handle_file_download(request):
         if not file_name:
             if msg.video:
                 file_name = f"video_{message_id}.mp4"
-            elif msg.audio:
-                file_name = f"audio_{message_id}.mp3"
-            elif msg.photo:
-                file_name = f"photo_{message_id}.jpg"
             else:
                 file_name = f"file_{message_id}.bin"
 
@@ -269,8 +271,12 @@ async def handle_file_download(request):
                     offset_difference = 0
 
             to_write = min(len(chunk), length - bytes_written)
-            await response.write(chunk[:to_write])
-            await response.drain()
+            try:
+                await response.write(chunk[:to_write])
+                await response.drain()
+            except (ConnectionResetError, RuntimeError):
+                break
+
             bytes_written += to_write
 
             if bytes_written >= length:
@@ -282,7 +288,6 @@ async def handle_file_download(request):
 
 async def main():
     global app
-    # in_memory=True evita la creación de archivos .session bloqueantes en contenedores Docker/Fly.io
     app = Client(
         "streamvideov1",
         api_id=API_ID,
