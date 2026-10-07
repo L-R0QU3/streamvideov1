@@ -2,6 +2,7 @@ import asyncio
 import os
 import hmac
 import hashlib
+import urllib.parse
 from dotenv import load_dotenv
 
 from hydrogram import Client, filters
@@ -15,7 +16,6 @@ API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 SERVER_URL = os.getenv("SERVER_URL", "http://localhost:8080")
 
-# Clave secreta para firmar los enlaces
 SECRET_KEY = API_HASH.encode()
 
 routes = web.RouteTableDef()
@@ -35,7 +35,7 @@ def verify_token(chat_id: int, message_id: int, token: str) -> bool:
 
 @routes.get("/")
 async def handle_home(request):
-    return web.Response(text="200", status=200)
+    return web.Response(text="200 OK - Bot Streamer & Downloader Active", status=200)
 
 # --- REPRODUCTOR HTML CON INTERFAZ MODERNA PLYR ---
 @routes.get("/stream/{chat_id}/{message_id}")
@@ -45,7 +45,6 @@ async def handle_stream_player(request):
         message_id = int(request.match_info["message_id"])
         token = request.query.get("token")
 
-        # Validación de Seguridad
         if not token or not verify_token(chat_id, message_id, token):
             return web.Response(status=403, text="⛔ Enlace no válido.")
 
@@ -57,7 +56,6 @@ async def handle_stream_player(request):
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Stream Player</title>
-    <!-- Plyr CSS para interfaz moderna estilo cine -->
     <link rel="stylesheet" href="https://cdn.plyr.io/3.7.8/plyr.css" />
     <style>
         html, body {{
@@ -79,11 +77,10 @@ async def handle_stream_player(request):
             align-items: center;
             background: #000;
         }}
-        /* Personalización de Plyr a pantalla completa */
         .plyr {{
             width: 100vw !important;
             height: 100vh !important;
-            --plyr-color-main: #e50914; /* Color rojo estilo streaming */
+            --plyr-color-main: #e50914;
         }}
         .plyr__video-wrapper {{
             height: 100vh !important;
@@ -100,7 +97,6 @@ async def handle_stream_player(request):
         </video>
     </div>
 
-    <!-- Plyr JS -->
     <script src="https://cdn.plyr.io/3.7.8/plyr.js"></script>
     <script>
         document.addEventListener('DOMContentLoaded', () => {{
@@ -135,17 +131,16 @@ async def handle_video_bytes(request):
         message_id = int(request.match_info["message_id"])
         token = request.query.get("token")
 
-        # Validación de Seguridad
         if not token or not verify_token(chat_id, message_id, token):
             return web.Response(status=403, text="Acceso denegado.")
 
         msg = await app.get_messages(chat_id, message_id)
-        if not msg or (not msg.video and not msg.document):
+        if not msg or (not msg.video and not msg.document and not msg.audio):
             return web.Response(status=404, text="Video no encontrado")
 
-        media = msg.video or msg.document
+        media = msg.video or msg.document or msg.audio
         file_size = media.file_size
-        mime_type = media.mime_type or "video/mp4"
+        mime_type = getattr(media, "mime_type", None) or "video/mp4"
 
         range_header = request.headers.get("Range")
         from_bytes, to_bytes = 0, file_size - 1
@@ -199,27 +194,125 @@ async def handle_video_bytes(request):
     except Exception as e:
         return web.Response(status=500, text=str(e))
 
+# --- ENDPOINT DE DESCARGA DIRECTA DE ARCHIVOS ---
+@routes.get("/download/{chat_id}/{message_id}")
+async def handle_file_download(request):
+    try:
+        chat_id = int(request.match_info["chat_id"])
+        message_id = int(request.match_info["message_id"])
+        token = request.query.get("token")
+
+        if not token or not verify_token(chat_id, message_id, token):
+            return web.Response(status=403, text="Acceso denegado.")
+
+        msg = await app.get_messages(chat_id, message_id)
+        if not msg:
+            return web.Response(status=404, text="Mensaje no encontrado")
+
+        media = msg.document or msg.video or msg.audio or msg.voice or msg.photo
+        if not media:
+            return web.Response(status=404, text="No hay archivo adjunto en este mensaje")
+
+        file_size = getattr(media, "file_size", 0)
+        mime_type = getattr(media, "mime_type", None) or "application/octet-stream"
+
+        file_name = getattr(media, "file_name", None)
+        if not file_name:
+            if msg.video:
+                file_name = f"video_{message_id}.mp4"
+            elif msg.audio:
+                file_name = f"audio_{message_id}.mp3"
+            elif msg.photo:
+                file_name = f"photo_{message_id}.jpg"
+            else:
+                file_name = f"file_{message_id}.bin"
+
+        safe_filename = urllib.parse.quote(file_name)
+
+        range_header = request.headers.get("Range")
+        from_bytes, to_bytes = 0, file_size - 1
+
+        if range_header:
+            bytes_range = range_header.replace("bytes=", "").split("-")
+            from_bytes = int(bytes_range[0])
+            if bytes_range[1]:
+                to_bytes = int(bytes_range[1])
+
+        length = to_bytes - from_bytes + 1
+        chunk_offset = from_bytes // CHUNK_SIZE
+        offset_difference = from_bytes - (chunk_offset * CHUNK_SIZE)
+
+        response = web.StreamResponse(
+            status=206 if range_header else 200,
+            headers={
+                "Content-Type": mime_type,
+                "Content-Disposition": f"attachment; filename*=UTF-8''{safe_filename}",
+                "Content-Range": f"bytes {from_bytes}-{to_bytes}/{file_size}",
+                "Content-Length": str(length),
+                "Accept-Ranges": "bytes",
+                "Cache-Control": "no-cache",
+            },
+        )
+
+        await response.prepare(request)
+
+        bytes_written = 0
+        async for chunk in app.stream_media(msg, offset=chunk_offset):
+            chunk_len = len(chunk)
+
+            if offset_difference > 0:
+                if chunk_len <= offset_difference:
+                    offset_difference -= chunk_len
+                    continue
+                else:
+                    chunk = chunk[offset_difference:]
+                    offset_difference = 0
+
+            to_write = min(len(chunk), length - bytes_written)
+            await response.write(chunk[:to_write])
+            await response.drain()
+            bytes_written += to_write
+
+            if bytes_written >= length:
+                break
+
+        return response
+    except Exception as e:
+        return web.Response(status=500, text=str(e))
+
 async def main():
     global app
-    app = Client("streamvideov1", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+    # in_memory=True evita la creación de archivos .session bloqueantes en contenedores Docker/Fly.io
+    app = Client(
+        "streamvideov1",
+        api_id=API_ID,
+        api_hash=API_HASH,
+        bot_token=BOT_TOKEN,
+        in_memory=True
+    )
 
     @app.on_message(filters.private)
     async def handle_private_messages(client: Client, message: Message):
-        if message.video or message.document:
+        if message.video or message.document or message.audio or message.photo:
             chat_id = message.chat.id
             message_id = message.id
-            
             token = generate_token(chat_id, message_id)
-            stream_link = f"{SERVER_URL}/stream/{chat_id}/{message_id}?token={token}"
             
-            await message.reply_text(
-                f"🎬 **Enlace de reproducción generado:**\n\n`{stream_link}`\n\n"
-                f"Abre este enlace en tu navegador para ver el video."
-            )
+            stream_link = f"{SERVER_URL}/stream/{chat_id}/{message_id}?token={token}"
+            download_link = f"{SERVER_URL}/download/{chat_id}/{message_id}?token={token}"
+            
+            response_text = "📁 **Opciones del archivo:**\n\n"
+            
+            if message.video or message.audio:
+                response_text += f"🎬 **Ver en línea:**\n`{stream_link}`\n\n"
+                
+            response_text += f"📥 **Descarga Directa:**\n`{download_link}`"
+            
+            await message.reply_text(response_text)
         else:
             await message.reply_text(
-                "👋 **¡Hola! Soy tu bot de streaming.**\n\n"
-                "Envíame o reenvíame un **video** para generarte el enlace de reproducción."
+                "👋 **¡Hola! Soy tu bot de streaming y descarga.**\n\n"
+                "Envíame o reenvíame un **video o archivo** para generarte los enlaces."
             )
 
     await app.start()
