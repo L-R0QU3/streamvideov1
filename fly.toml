@@ -20,9 +20,9 @@ primary_region = "dfw"
     handlers = ["tls", "http"]
 
   [[services.http_checks]]
-    interval = 10000
-    grace_period = "5s"
+    interval = 15000
+    grace_period = "30s"
     method = "get"
     path = "/"
     protocol = "http"
-    timeout = 2000
+    timeout = 5000
