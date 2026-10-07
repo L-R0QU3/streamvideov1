@@ -1,27 +1,28 @@
-# fly.toml app configuration file generated for streamvideov1 on 2026-10-07T17:44:33Z
-#
-# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
-#
-
-app = 'streamvideov1'
-primary_region = 'dfw'
+app = "streamvideov1"
+primary_region = "dfw"
 
 [build]
-  builder = 'paketobuildpacks/builder:base'
+  dockerfile = "Dockerfile"
 
 [env]
-  PORT = '8080'
+  PORT = "8080"
 
-[http_service]
+[[services]]
+  protocol = "tcp"
   internal_port = 8080
-  force_https = true
-  auto_stop_machines = 'stop'
-  auto_start_machines = true
-  min_machines_running = 0
-  processes = ['app']
 
-[[vm]]
-  memory = '1gb'
-  cpu_kind = 'shared'
-  cpus = 1
-  memory_mb = 512
+  [[services.ports]]
+    port = 80
+    handlers = ["http"]
+
+  [[services.ports]]
+    port = 443
+    handlers = ["tls", "http"]
+
+  [[services.http_checks]]
+    interval = 10000
+    grace_period = "5s"
+    method = "get"
+    path = "/"
+    protocol = "http"
+    timeout = 2000
