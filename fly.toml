@@ -1,9 +1,6 @@
 app = "streamvideov1"
 primary_region = "dfw"
 
-[build]
-  dockerfile = "./Dockerfile"
-
 [env]
   PORT = "8080"
 
