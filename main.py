@@ -33,7 +33,7 @@ app = None
 CHUNK_SIZE = 1024 * 1024  # Bloques de 1MB
 
 # --- RATE LIMITING Y CONTROL DE CONEXIONES ---
-MAX_GLOBAL_CONCURRENT_STREAMS = 5  # Máximo de streams en paralelo en todo el servidor
+MAX_GLOBAL_CONCURRENT_STREAMS = 10  # Máximo de streams en paralelo en todo el servidor
 MAX_IP_CONCURRENT_STREAMS = 2      # Máximo de streams en paralelo por IP
 
 global_stream_semaphore = asyncio.Semaphore(MAX_GLOBAL_CONCURRENT_STREAMS)
