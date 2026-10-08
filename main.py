@@ -2,7 +2,7 @@ import asyncio
 import os
 import hmac
 import hashlib
-import urllib.parse
+from collections import defaultdict
 from dotenv import load_dotenv
 
 from hydrogram import Client, filters
@@ -11,18 +11,44 @@ from aiohttp import web
 
 load_dotenv()
 
-API_ID = int(os.getenv("API_ID"))
+# --- VALIDACIÓN DE VARIABLES DE ENTORNO ---
+API_ID_RAW = os.getenv("API_ID")
 API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 SERVER_URL = os.getenv("SERVER_URL", "http://localhost:8080")
 
+if not API_ID_RAW or not API_HASH or not BOT_TOKEN:
+    raise ValueError(
+        "❌ ERROR DE CONFIGURACIÓN: Faltan variables de entorno obligatorias.\n"
+        "Asegúrate de definir API_ID, API_HASH y BOT_TOKEN en las variables de entorno."
+    )
+
+API_ID = int(API_ID_RAW)
 SECRET_KEY = API_HASH.encode()
 
 routes = web.RouteTableDef()
 app = None
 
-# Bloques de 1MB para streaming fluido
-CHUNK_SIZE = 1024 * 1024
+# Configuración de rendimiento y streaming
+CHUNK_SIZE = 1024 * 1024  # Bloques de 1MB
+
+# --- RATE LIMITING Y CONTROL DE CONEXIONES ---
+MAX_GLOBAL_CONCURRENT_STREAMS = 5  # Máximo de streams en paralelo en todo el servidor
+MAX_IP_CONCURRENT_STREAMS = 2      # Máximo de streams en paralelo por IP
+
+global_stream_semaphore = asyncio.Semaphore(MAX_GLOBAL_CONCURRENT_STREAMS)
+active_ip_connections = defaultdict(int)
+
+# Caché de metadatos en RAM (Mensaje -> Objetos de medios)
+media_cache = {}
+MAX_CACHE_SIZE = 200
+
+def get_client_ip(request: web.Request) -> str:
+    """Obtiene la IP real del cliente considerando los proxies de Railway/Cloudflare."""
+    x_forwarded_for = request.headers.get("X-Forwarded-For")
+    if x_forwarded_for:
+        return x_forwarded_for.split(",")[0].strip()
+    return request.remote or "unknown"
 
 def generate_token(chat_id: int, message_id: int) -> str:
     """Genera una firma HMAC permanente para validar el enlace."""
@@ -34,11 +60,24 @@ def verify_token(chat_id: int, message_id: int, token: str) -> bool:
     expected_token = generate_token(chat_id, message_id)
     return hmac.compare_digest(expected_token, token)
 
+async def get_cached_message(chat_id: int, message_id: int):
+    """Obtiene el mensaje de Telegram desde la caché de RAM o realiza la consulta a la API."""
+    cache_key = f"{chat_id}:{message_id}"
+    if cache_key in media_cache:
+        return media_cache[cache_key]
+    
+    msg = await app.get_messages(chat_id, message_id)
+    if msg:
+        if len(media_cache) >= MAX_CACHE_SIZE:
+            media_cache.pop(next(iter(media_cache)))  # Elimina la entrada más antigua
+        media_cache[cache_key] = msg
+    return msg
+
 @routes.get("/")
 async def handle_home(request):
     return web.Response(text="200 OK - Bot Active", status=200)
 
-# --- REPRODUCTOR OPTIMIZADO PARA AHORRO DE ANCHO DE BANDA ---
+# --- REPRODUCTOR HTML5 OPTIMIZADO CON PLYR ---
 @routes.get("/stream/{chat_id}/{message_id}")
 async def handle_stream_player(request):
     try:
@@ -124,9 +163,18 @@ async def handle_stream_player(request):
     except Exception:
         return web.Response(status=400, text="Petición incorrecta.")
 
-# --- TRANSMISIÓN DE BYTES CON CORTE DE CONEXIÓN RÁPIDO ---
+# --- TRANSMISIÓN DE BYTES CON CONTROL DE CONEXIONES Y RATE LIMITING ---
 @routes.get("/video/{chat_id}/{message_id}")
 async def handle_video_bytes(request):
+    ip_address = get_client_ip(request)
+
+    # Validar límite de conexiones por IP
+    if active_ip_connections[ip_address] >= MAX_IP_CONCURRENT_STREAMS:
+        return web.Response(
+            status=429, 
+            text="⚠️ Demasiadas conexiones simultáneas desde tu IP. Cierra otras pestañas e intenta de nuevo."
+        )
+
     try:
         chat_id = int(request.match_info["chat_id"])
         message_id = int(request.match_info["message_id"])
@@ -135,9 +183,10 @@ async def handle_video_bytes(request):
         if not token or not verify_token(chat_id, message_id, token):
             return web.Response(status=403, text="Acceso denegado.")
 
-        msg = await app.get_messages(chat_id, message_id)
+        # Obtener el mensaje desde la caché en RAM
+        msg = await get_cached_message(chat_id, message_id)
         if not msg or (not msg.video and not msg.document and not msg.audio):
-            return web.Response(status=404, text="Archivo no encontrado")
+            return web.Response(status=404, text="Archivo de video no encontrado")
 
         media = msg.video or msg.document or msg.audio
         file_size = media.file_size
@@ -170,117 +219,38 @@ async def handle_video_bytes(request):
 
         await response.prepare(request)
 
-        bytes_written = 0
-        async for chunk in app.stream_media(msg, offset=chunk_offset):
-            chunk_len = len(chunk)
-
-            if offset_difference > 0:
-                if chunk_len <= offset_difference:
-                    offset_difference -= chunk_len
-                    continue
-                else:
-                    chunk = chunk[offset_difference:]
-                    offset_difference = 0
-
-            to_write = min(len(chunk), length - bytes_written)
-            
-            # Si el cliente cierra el navegador, detiene la descarga de Telegram inmediatamente
+        # Adquirir permisos de conexión global y por IP
+        async with global_stream_semaphore:
+            active_ip_connections[ip_address] += 1
             try:
-                await response.write(chunk[:to_write])
-                await response.drain()
-            except (ConnectionResetError, RuntimeError):
-                break
+                bytes_written = 0
+                async for chunk in app.stream_media(msg, offset=chunk_offset):
+                    chunk_len = len(chunk)
 
-            bytes_written += to_write
+                    if offset_difference > 0:
+                        if chunk_len <= offset_difference:
+                            offset_difference -= chunk_len
+                            continue
+                        else:
+                            chunk = chunk[offset_difference:]
+                            offset_difference = 0
 
-            if bytes_written >= length:
-                break
+                    to_write = min(len(chunk), length - bytes_written)
+                    
+                    try:
+                        await response.write(chunk[:to_write])
+                        await response.drain()
+                    except (ConnectionResetError, RuntimeError):
+                        break
 
-        return response
-    except Exception as e:
-        return web.Response(status=500, text=str(e))
+                    bytes_written += to_write
 
-# --- ENDPOINT DE DESCARGA DIRECTA ---
-@routes.get("/download/{chat_id}/{message_id}")
-async def handle_file_download(request):
-    try:
-        chat_id = int(request.match_info["chat_id"])
-        message_id = int(request.match_info["message_id"])
-        token = request.query.get("token")
-
-        if not token or not verify_token(chat_id, message_id, token):
-            return web.Response(status=403, text="Acceso denegado.")
-
-        msg = await app.get_messages(chat_id, message_id)
-        if not msg:
-            return web.Response(status=404, text="Mensaje no encontrado")
-
-        media = msg.document or msg.video or msg.audio or msg.photo
-        if not media:
-            return web.Response(status=404, text="Archivo no adjunto")
-
-        file_size = getattr(media, "file_size", 0)
-        mime_type = getattr(media, "mime_type", None) or "application/octet-stream"
-
-        file_name = getattr(media, "file_name", None)
-        if not file_name:
-            if msg.video:
-                file_name = f"video_{message_id}.mp4"
-            else:
-                file_name = f"file_{message_id}.bin"
-
-        safe_filename = urllib.parse.quote(file_name)
-
-        range_header = request.headers.get("Range")
-        from_bytes, to_bytes = 0, file_size - 1
-
-        if range_header:
-            bytes_range = range_header.replace("bytes=", "").split("-")
-            from_bytes = int(bytes_range[0])
-            if bytes_range[1]:
-                to_bytes = int(bytes_range[1])
-
-        length = to_bytes - from_bytes + 1
-        chunk_offset = from_bytes // CHUNK_SIZE
-        offset_difference = from_bytes - (chunk_offset * CHUNK_SIZE)
-
-        response = web.StreamResponse(
-            status=206 if range_header else 200,
-            headers={
-                "Content-Type": mime_type,
-                "Content-Disposition": f"attachment; filename*=UTF-8''{safe_filename}",
-                "Content-Range": f"bytes {from_bytes}-{to_bytes}/{file_size}",
-                "Content-Length": str(length),
-                "Accept-Ranges": "bytes",
-                "Cache-Control": "no-cache",
-            },
-        )
-
-        await response.prepare(request)
-
-        bytes_written = 0
-        async for chunk in app.stream_media(msg, offset=chunk_offset):
-            chunk_len = len(chunk)
-
-            if offset_difference > 0:
-                if chunk_len <= offset_difference:
-                    offset_difference -= chunk_len
-                    continue
-                else:
-                    chunk = chunk[offset_difference:]
-                    offset_difference = 0
-
-            to_write = min(len(chunk), length - bytes_written)
-            try:
-                await response.write(chunk[:to_write])
-                await response.drain()
-            except (ConnectionResetError, RuntimeError):
-                break
-
-            bytes_written += to_write
-
-            if bytes_written >= length:
-                break
+                    if bytes_written >= length:
+                        break
+            finally:
+                active_ip_connections[ip_address] -= 1
+                if active_ip_connections[ip_address] <= 0:
+                    del active_ip_connections[ip_address]
 
         return response
     except Exception as e:
@@ -298,26 +268,23 @@ async def main():
 
     @app.on_message(filters.private)
     async def handle_private_messages(client: Client, message: Message):
-        if message.video or message.document or message.audio or message.photo:
+        if message.video or message.document or message.audio:
             chat_id = message.chat.id
             message_id = message.id
             token = generate_token(chat_id, message_id)
             
             stream_link = f"{SERVER_URL}/stream/{chat_id}/{message_id}?token={token}"
-            download_link = f"{SERVER_URL}/download/{chat_id}/{message_id}?token={token}"
             
-            response_text = "📁 **Opciones del archivo:**\n\n"
-            
-            if message.video or message.audio:
-                response_text += f"🎬 **Ver en línea:**\n`{stream_link}`\n\n"
-                
-            response_text += f"📥 **Descarga Directa:**\n`{download_link}`"
+            response_text = (
+                "🎬 **Enlace de Reproducción:**\n\n"
+                f"`{stream_link}`"
+            )
             
             await message.reply_text(response_text)
         else:
             await message.reply_text(
-                "👋 **¡Hola! Soy tu bot de streaming y descarga.**\n\n"
-                "Envíame o reenvíame un **video o archivo** para generarte los enlaces."
+                "👋 **¡Hola! Soy tu bot de streaming de video.**\n\n"
+                "Envíame o reenvíame un **video** para generarte el enlace de reproducción."
             )
 
     await app.start()
